@@ -34,8 +34,7 @@ class NPIFetch:
         self.output_file = output
         logging.basicConfig(filename='npi-fetch.log',level=logging.INFO)
         self.url = 'https://npiregistry.cms.hhs.gov/api/'
-        self.params = {'first_name': 'Robert', 'last_name': 'Gentry',
-                       'state': 'OR'}
+        self.key_prefix = ['', 'authorized_official_']
         self.redFill = PatternFill(start_color='FFFF0000', end_color='FFFF0000',
                               fill_type='solid')
 
@@ -52,8 +51,8 @@ class NPIFetch:
 
         except Exception as e:
             # Log the exception
-            print("Exeption with spreadsheet: {}".format(e))
-            logging.critical("Exeption with spreadsheet: {}".format(e))
+            print("Exception with spreadsheet: {}".format(e))
+            logging.critical("Exception with spreadsheet: {}".format(e))
             exit()
 
         # Macros for the row indexes
@@ -86,9 +85,17 @@ class NPIFetch:
                 raise ValueError('No Data Found')
             elif(data['result_count'] > 1):
                 raise ValueError('More than one result found.')
+
+        except KeyError as e:
+            # There may be no results. Possibly an deactivated NPI.
+            # Get the problem to the output sheet.
+            error_info = 'KeyError in get_npi_data: {}. '.format(e)
+            logging.info(error_info)
+            return data
+
         except Exception as e:
             # Log the exception
-            exception_info = 'Exeption in get_npi_data(): {} '.format(e)
+            exception_info = 'Exception in get_npi_data(): {} '.format(e)
             exception_info += 'URL: {}'.format(self.url)
             print(exception_info)
             logging.critical(exception_info)
@@ -116,32 +123,47 @@ class NPIFetch:
         """Read the intput file."""
         try:
             i = 1 # Data in the updated_sheet starts on row 1
-            for row in self.sheet['A2':'E20']:
-                logging.info('SER: ' + str(row[self.ID].value))
-                logging.info('Name: ' + str(row[self.NAME].value))
-                original_row = row
-                npi = row[self.NPI].value
-                params = {'number': npi}
-                prov_data = self.get_npi_data(params)
-                # if(cell.value == 13227):
-                # sheet[cell.coordinate].style = redFill
-                # Validate the data. Is the name, sex, and taxonomy correct?
-                mismatches = self.xlsx_mismatches_api(prov_data, row)
-                if(mismatches):
-                    logging.info('Mismatches: ' + mismatches)
-                    # Write the row to the changed_sheet
-                    self.append_row(self.updated_sheet, row)
-                    self.updated_sheet.cell(row=i, column=6).value = mismatches
-                    i += 1
+            first_row = True
+            for row in self.sheet.rows:
+                if(first_row):
+                    first_row = False
                 else:
-                    # Write the row to the unchanged_sheet
-                    logging.info('No change to original data')
-                    self.append_row(self.unchanged_sheet, original_row)
+                    logging.info('NPI: ' + str(row[self.NPI].value))
+                    logging.info('SER: ' + str(row[self.ID].value))
+                    logging.info('Name: ' + str(row[self.NAME].value))
+                    original_row = row
+                    npi = row[self.NPI].value
+                    params = {'number': npi}
+                    prov_data = self.get_npi_data(params)
+                    mismatches = None
+                    bad_results = None
+                    # Make sure you got results back
+                    if('result_count' not in prov_data.keys()):
+                        bad_results = 'Error: No results found! '
+                        bad_results += str(prov_data)
+                    else:
+                        # Validate the data. Is the name, sex, and taxonomy correct?
+                        mismatches = self.xlsx_mismatches_api(prov_data, row)
+                    if(mismatches):
+                        logging.info('Mismatches: ' + mismatches)
+                        # Write the row to the changed_sheet
+                        self.append_row(self.updated_sheet, row)
+                        self.updated_sheet.cell(row=i, column=6).value = mismatches
+                        i += 1
+                    elif(bad_results):
+                        self.append_row(self.updated_sheet, row)
+                        self.updated_sheet.cell(row=i, column=6).value = bad_results
+                        self.updated_sheet.cell(row=i, column=6).fill = self.redFill
+                        i += 1
+                    else:
+                        # Write the row to the unchanged_sheet
+                        logging.info('No change to original data')
+                        self.append_row(self.unchanged_sheet, original_row)
 
             self.output_wb.save(self.output_file)
 
         except Exception as e:
-            exception_info = "Exeption in process(): {}".format(e)
+            exception_info = "Exception in process(): {}".format(e)
             print(exception_info)
             logging.critical(exception_info)
             exit()
@@ -151,11 +173,29 @@ class NPIFetch:
         input: a dictionary of provider data, a row object of provider data.
         output: a string with reasons for mismatch.
         """
+        mismatch_info = []
+        # Look for errors in the name.
         try:
-            mismatch_info = []
-            # Look for errors in the name.
             api_f_name = prov_data['first_name']
             api_l_name = prov_data['last_name']
+        except KeyError as e:
+            exception_info = 'KeyError Exception in '
+            exception_info += 'xlsx_mismatches_api: {}\n'.format(e)
+            exception_info += "Provider data: {}".format(prov_data)
+            print(exception_info)
+            logging.warning(exception_info)
+            try:
+                api_f_name = prov_data[self.key_prefix[1] + 'first_name']
+                api_l_name = prov_data[self.key_prefix[1] + 'last_name']
+            except KeyError as e:
+                exception_info = 'KeyError Exception in '
+                exception_info += 'xlsx_mismatches_api: {}\n'.format(e)
+                exception_info += "Provider data: {}".format(prov_data)
+                print(exception_info)
+                logging.critical(exception_info)
+                exit()
+
+        try:
             xlsx_f_name, xlsx_l_name = self.parse_name(row[self.NAME].value)
             name_errors = ''
 
@@ -167,32 +207,40 @@ class NPIFetch:
             else:
                 mismatch_info.append('Error in SER name. Expected format: ' +
                                      'Last, First or Last, First M')
-            # Look for a blank taxonomy in the workbook.
-            tax_empty = self.taxonomy_empty(row[self.TAX].value)
-            if(tax_empty):
-                row[self.TAX].value = prov_data['code']
-                mismatch_info.append(tax_empty)
-            # See if the gender is in the SER.
-            sex_empty = self.sex_empty(row[self.SEX].value, prov_data['gender'])
-            if(sex_empty):
-                # Update the sex.
-                if(prov_data['gender'] == 'F'):
-                    row[self.SEX].value = 'Female'
-                elif(prov_data['gender'] == 'M'):
-                    row[self.SEX].value = 'Male'
-                else:
-                    mismatch_info.append('Error in gender: ' + prov_data['gender'])
-                mismatch_info.append(sex_empty)
-
-            if(mismatch_info):
-                return '\n'.join(mismatch_info)
-            return ''
-
         except Exception as e:
-            exception_info = "Exeption in xlsx_mismatches_api: {}".format(e)
+            exception_info = "Exception with name in xlsx_mismatches_api: {}".format(e)
             print(exception_info)
             logging.critical(exception_info)
             exit()
+
+
+        # Look for a blank taxonomy in the workbook.
+        tax_empty = self.taxonomy_empty(row[self.TAX].value)
+        if(tax_empty):
+            row[self.TAX].value = prov_data['code']
+            mismatch_info.append(tax_empty)
+        # See if the gender is in the SER.
+        try:
+            xlsx_sex_empty = self.sex_empty(row[self.SEX].value, prov_data['gender'])
+
+        except KeyError as e:
+            xlsx_sex_empty = ''
+            api_sex_empty = 'Error in gender: no gender info available from api'
+            mismatch_info.append(api_sex_empty)
+        if(xlsx_sex_empty):
+            # Update the sex.
+            if(prov_data['gender'] == 'F'):
+                row[self.SEX].value = 'Female'
+            elif(prov_data['gender'] == 'M'):
+                row[self.SEX].value = 'Male'
+            else:
+                mismatch_info.append('Error unrecognized gender: ' +
+                                      prov_data['gender'])
+                mismatch_info.append(sex_empty)
+
+        if(mismatch_info):
+            return '\n'.join(mismatch_info)
+        return ''
 
     def name_matches(self, api_f_name, api_l_name, xlsx_full_name):
         mismatch_info = ''
@@ -232,13 +280,13 @@ class NPIFetch:
                                      'to the name: {}'.format(name))
 
         except ValueError as e:
-            exception_info = "Exeption in parse_name: {}".format(e)
+            exception_info = "Exception in parse_name: {}".format(e)
             print(exception_info)
             logging.warning(exception_info)
             return "", ""
 
         except Exception as e:
-            exception_info = "Exeption in parse_name: {}".format(e)
+            exception_info = "Exception in parse_name: {}".format(e)
             print(exception_info)
             logging.critical(exception_info)
             return "", ""
@@ -279,9 +327,9 @@ class NPIFetch:
             sheet.append(cell_values)
 
         except Exception as e:
-            exeption_info = "Problem appending to xlxs file: {}".format(sheet.title)
-            logging.critical(exeption_info)
-            print(exeption_info)
+            exception_info = "Problem appending to xlxs file: {}".format(sheet.title)
+            logging.critical(exception_info)
+            print(exception_info)
 
 
 if __name__ == "__main__":
