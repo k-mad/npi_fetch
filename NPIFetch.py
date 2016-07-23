@@ -77,14 +77,15 @@ class NPIFetch:
             # Excract only the needed data
             if(data['result_count'] == 1):
                 d1 = data['results'][0]['basic']
+                d1['result_count'] = data['result_count']
                 d2 = data['results'][0]['taxonomies'][0]
                 d2['number'] = data['results'][0]['number']
                 d1.update(d2)
                 return d1
-            elif(data['result_count'] == 0):
-                raise ValueError('No Data Found')
-            elif(data['result_count'] > 1):
-                raise ValueError('More than one result found.')
+            # elif(data['result_count'] == 0):
+            # elif(data['result_count'] > 1):
+            else:
+                return data
 
         except KeyError as e:
             # There may be no results. Possibly an deactivated NPI.
@@ -129,6 +130,8 @@ class NPIFetch:
                     first_row = False
                 else:
                     logging.info('NPI: ' + str(row[self.NPI].value))
+                    # It's nice to see some output to know the program isn't stuck.
+                    print('NPI: ' + str(row[self.NPI].value))
                     logging.info('SER: ' + str(row[self.ID].value))
                     logging.info('Name: ' + str(row[self.NAME].value))
                     original_row = row
@@ -139,23 +142,37 @@ class NPIFetch:
                     bad_results = None
                     # Make sure you got results back
                     if('result_count' not in prov_data.keys()):
+                        logging.debug('no result count')
                         bad_results = 'Error: No results found! '
                         bad_results += str(prov_data)
+                    elif(prov_data['result_count'] < 1):
+                        logging.debug('result count < 1')
+                        bad_results = 'Error: No results found! '
+                        bad_results += str(prov_data)
+                    elif(prov_data['result_count'] > 1):
+                        logging.debug('result count > 1')
+                        bad_results = 'Error: Too many results found! '
+                        bad_results += str(prov_data)
                     else:
+                        logging.debug('result count = 1')
                         # Validate the data. Is the name, sex, and taxonomy correct?
                         mismatches = self.xlsx_mismatches_api(prov_data, row)
+
                     if(mismatches):
+                        print('mismatch')
                         logging.info('Mismatches: ' + mismatches)
                         # Write the row to the changed_sheet
                         self.append_row(self.updated_sheet, row)
                         self.updated_sheet.cell(row=i, column=6).value = mismatches
                         i += 1
                     elif(bad_results):
-                        self.append_row(self.updated_sheet, row)
+                        print('bad result')
+                        self.append_row(self.updated_sheet, original_row)
                         self.updated_sheet.cell(row=i, column=6).value = bad_results
                         self.updated_sheet.cell(row=i, column=6).fill = self.redFill
                         i += 1
                     else:
+                        print('unchanged')
                         # Write the row to the unchanged_sheet
                         logging.info('No change to original data')
                         self.append_row(self.unchanged_sheet, original_row)
@@ -204,6 +221,7 @@ class NPIFetch:
                                                 row[self.NAME].value)
                 if(name_errors):
                     mismatch_info.append(name_errors)
+                    row[self.NAME].value = api_l_name + ', ' + api_f_name
             else:
                 mismatch_info.append('Error in SER name. Expected format: ' +
                                      'Last, First or Last, First M')
@@ -246,12 +264,17 @@ class NPIFetch:
         mismatch_info = ''
         if(api_f_name.upper() not in xlsx_full_name.upper()):
             mismatch_info += 'First name mismatch. NPI database returned: ' + api_f_name
+            mismatch_info += '. '
             logging.warning('NPI number does not match first name')
         if(api_l_name.upper() not in xlsx_full_name.upper()):
             if(mismatch_info):
                 mismatch_info += ' '
             mismatch_info += 'Last name mismatch. NPI database returned: ' + api_l_name
+            mismatch_info += '. '
             logging.warning('NPI number does not match last name')
+        if(mismatch_info):
+            mismatch_info += 'SER contains: ' + xlsx_full_name
+            mismatch_info += '. '
         return mismatch_info
 
     def parse_name(self, name):
