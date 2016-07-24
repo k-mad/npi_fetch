@@ -19,7 +19,7 @@ class NPIFetch:
     """
     Queries the npi registry and checks the data against an excel file.
     input: Excel file with the following colums:
-        ProvID, Provider, NPI, Taxonomy, Sex
+        ProvID, Provider, NPI, Taxonomy, Gender
     output: Excel file containing any highlighted changes
     """
     def __init__(self, input, output):
@@ -30,10 +30,11 @@ class NPIFetch:
         3. The NPI number
         4. The Taxonomy code
         5. The provider sex
-        Set error to True if error occurs."""
+        """
         self.output_file = output
         logging.basicConfig(filename='npi-fetch.log',level=logging.INFO)
         self.url = 'https://npiregistry.cms.hhs.gov/api/'
+        # Some providers have their keys prefixed with 'authorized_official_'
         self.key_prefix = ['', 'authorized_official_']
         self.redFill = PatternFill(start_color='FFFF0000', end_color='FFFF0000',
                               fill_type='solid')
@@ -55,12 +56,12 @@ class NPIFetch:
             logging.critical("Exception with spreadsheet: {}".format(e))
             exit()
 
-        # Macros for the row indexes
-        self.ID = 0
+        # Macros for the row indices
+        self.ID =   0
         self.NAME = 1
-        self.NPI = 2
-        self.TAX = 3
-        self.SEX = 4
+        self.NPI =  2
+        self.TAX =  3
+        self.SEX =  4
 
     def get_npi_data(self, params):
         try:
@@ -82,8 +83,7 @@ class NPIFetch:
                 d2['number'] = data['results'][0]['number']
                 d1.update(d2)
                 return d1
-            # elif(data['result_count'] == 0):
-            # elif(data['result_count'] > 1):
+
             else:
                 return data
 
@@ -231,7 +231,6 @@ class NPIFetch:
             logging.critical(exception_info)
             exit()
 
-
         # Look for a blank taxonomy in the workbook.
         tax_empty = self.taxonomy_empty(row[self.TAX].value)
         if(tax_empty):
@@ -246,7 +245,7 @@ class NPIFetch:
             api_sex_empty = 'Error in gender: no gender info available from api'
             mismatch_info.append(api_sex_empty)
         if(xlsx_sex_empty):
-            # Update the sex.
+            # Update the gender.
             if(prov_data['gender'] == 'F'):
                 row[self.SEX].value = 'Female'
             elif(prov_data['gender'] == 'M'):
@@ -322,6 +321,7 @@ class NPIFetch:
     def taxonomy_empty(self, xlsx_tax):
         if(xlsx_tax):
             return ''
+        # Be careful, providers can have many taxonomies.
         # if(api_tax != xlsx_tax):
             # return ('Taxonomy mismatch: {} != {}.'.format(api_tax, xlsx_tax))
         else:
@@ -358,21 +358,20 @@ class NPIFetch:
 if __name__ == "__main__":
     # Setup the comand line argument requirements
     parser = argparse.ArgumentParser(description='NPIFetch takes two ' +
-                                'arguments: a csv input file and an ' +
-                                'output file name.' +
-                                NPIFetch.__doc__)
+                                     'arguments: a csv input file and an ' +
+                                     'output file name.' +
+                                     NPIFetch.__doc__)
 
     parser.add_argument('-i', metavar='input file', type=str,
-                   help='input: the name of the csv input file of ' +
-                   'providers to query.', required=True)
+                        help='input: the name of the csv input file of ' +
+                        'providers to query.', required=True)
 
     parser.add_argument('-o', metavar='output file', type=str,
-                   help='output: the name of the file to write the ' +
-                   'updated provider info to.', required=True)
+                        help='output: the name of the file to write the ' +
+                        'updated provider info to.', required=True)
 
-    # Parse the arguments.
     cmdargs = parser.parse_args()
 
     npif = NPIFetch(cmdargs.i, cmdargs.o)
     npif.process()
-
+    # the end
